@@ -44,6 +44,7 @@ final class NotchPanelController {
     private let panel: NotchPanel
     private var bag = Set<AnyCancellable>()
     private var collapse: DispatchWorkItem?
+    private var clickMonitor: Any?
 
     init(model: AppModel) {
         self.model = model
@@ -77,6 +78,15 @@ final class NotchPanelController {
             }
             .store(in: &bag)
 
+        // A click that lands in any other app closes the panel. Clicks inside the panel are
+        // ours and never reach this monitor.
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.collapse?.cancel()
+                self?.model.dismissPanel()
+            }
+        }
+
         layout()
     }
 
@@ -91,7 +101,7 @@ final class NotchPanelController {
             self.model.hovering = false
         }
         collapse = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
     /// The built-in display if it has a notch, otherwise the screen with the menu bar.

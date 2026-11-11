@@ -49,7 +49,11 @@ final class AppModel: ObservableObject {
     /// Opens the Perch menu at the mouse. Set by the app delegate.
     var openMenu: (() -> Void)?
 
-    var expanded: Bool { hovering || peeking || !approvals.isEmpty }
+    /// Set when the user clicks elsewhere to close the panel while something is still waiting.
+    /// The panel then stays closed until they hover it or something new arrives.
+    @Published private(set) var suppressed = false
+
+    var expanded: Bool { hovering || (!suppressed && (peeking || !approvals.isEmpty)) }
 
     /// Sessions that need the user first, then finished ones, then the rest.
     var sessions: [Session] {
@@ -123,6 +127,7 @@ final class AppModel: ObservableObject {
                                           summary: event.toolSummary ?? "", fd: fd,
                                           questions: event.questions, toolInputJSON: event.toolInputJSON)
             approvals.append(pending)
+            if suppressed { suppressed = false }
             watch(pending)
         } else {
             close(fd)
@@ -219,8 +224,9 @@ final class AppModel: ObservableObject {
     // MARK: Popping open and jumping to a session
 
     /// Opens the panel for a few seconds so the user sees which session wants them.
-    func peek(seconds: TimeInterval = 6) {
+    func peek(seconds: TimeInterval = 3.5) {
         peekWork?.cancel()
+        if suppressed { suppressed = false }
         if !peeking { peeking = true }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.peeking else { return }
@@ -228,6 +234,16 @@ final class AppModel: ObservableObject {
         }
         peekWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    /// Closes the panel now: the user clicked somewhere else. Anything still waiting stays
+    /// reachable by hovering the notch, and the pill keeps its orange mark.
+    func dismissPanel() {
+        guard expanded else { return }
+        peekWork?.cancel()
+        if peeking { peeking = false }
+        if hovering { hovering = false }
+        if !approvals.isEmpty, !suppressed { suppressed = true }
     }
 
     func title(for session: Session) -> String {

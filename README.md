@@ -7,7 +7,7 @@ Perch is an independent project. It is not made by, endorsed by, or affiliated w
 ## What it does
 
 - **Session status.** A pill at the notch with one dot per session: blue is working, orange needs you, green has finished and is waiting for you, grey is idle. Hover to see each conversation's name, state and current tool.
-- **Pops open when Claude is waiting.** When a turn finishes or Claude asks something, the panel opens for six seconds with that conversation at the top.
+- **Pops open when Claude is waiting.** When a turn finishes or Claude asks something, the panel opens for a few seconds with that conversation at the top. Clicking anywhere else closes it at once.
 - **Answer questions.** When Claude asks a multiple-choice question, the panel shows it with its choices; clicking one answers it. "Answer in Claude" hands it back to Claude's own dialog.
 - **Approve or deny.** When Claude asks permission, the panel shows the tool and the full command or file (scrollable), with Allow, Deny and Later. Later hands the request back to Claude's own prompt.
 - **Click to open.** Clicking a row brings the Claude desktop app forward on that conversation.
