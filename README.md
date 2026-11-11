@@ -69,6 +69,7 @@ Then:
 - **Opening a conversation and showing its name** rely on how the Claude desktop app currently stores its sessions and on its `claude://` link. These are not documented and may change. Sessions started in a terminal get a name but cannot be opened by clicking.
 - **Approvals are rare in auto mode.** If your sessions approve most things by themselves, you will mostly see questions and "finished" pop-ups.
 - **Typed answers.** A question's "Other" free-text answer has to be given in Claude.
+- **Staying put between desktops.** To stop the pill sliding sideways when you swipe between desktops, Perch places its window in its own layer using window-server calls that Apple does not document. They are looked up when the app starts; if a future macOS removes them, the pill goes back to sliding with the desktop and nothing else changes.
 - **Menu bar space.** If the bird icon does not appear, your menu bar is full and macOS has hidden it. Use the ⋯ button in the panel.
 - No "always allow", and no percentage of your plan limit (that would need your login).
 

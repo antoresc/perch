@@ -111,6 +111,22 @@ final class NotchPanelController {
         return NotchMetrics(hasNotch: false, notchWidth: 0, barHeight: bar)
     }
 
+    /// Extra transparent room around the shape, so the spring can overshoot without being cut off.
+    private static let slack = CGSize(width: 24, height: 16)
+    private var trim: DispatchWorkItem?
+
+    private func frame(for size: CGSize, on screen: NSScreen) -> NSRect {
+        NSRect(x: (screen.frame.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,
+               width: size.width, height: size.height)
+    }
+
+    /// The size the window should settle at for the current state, or nil to hide it.
+    private func settledSize() -> CGSize? {
+        let size = model.expanded ? NotchLayout.expandedSize(model) : NotchLayout.collapsedSize(model)
+        guard size.width > 0, size.height > 0 else { return nil }
+        return CGSize(width: size.width + Self.slack.width, height: size.height + Self.slack.height)
+    }
+
     private func layout() {
         guard model.showPanel, let screen = targetScreen() else {
             panel.orderOut(nil)
@@ -121,27 +137,39 @@ final class NotchPanelController {
             model.metrics = m // triggers another layout pass with the new numbers
             return
         }
-        let size = model.expanded ? NotchLayout.expandedSize(model) : NotchLayout.collapsedSize(model)
-        guard size.width > 0, size.height > 0 else {
+        guard let settled = settledSize() else {
+            trim?.cancel()
             panel.orderOut(nil)
             return
         }
-        let frame = NSRect(x: (screen.frame.midX - size.width / 2).rounded(),
-                           y: screen.frame.maxY - size.height,
-                           width: size.width, height: size.height)
-        if panel.frame != frame {
-            if panel.isVisible {
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.16
-                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                    panel.animator().setFrame(frame, display: true)
-                }
-            } else {
-                panel.setFrame(frame, display: true)
-            }
+        // Grow at once so the animation has room; shrink only after it has finished.
+        // The window itself never animates: the shape inside it does.
+        let current = panel.isVisible ? panel.frame.size : .zero
+        let roomy = CGSize(width: max(current.width, settled.width), height: max(current.height, settled.height))
+        let roomyFrame = frame(for: roomy, on: screen)
+        if panel.frame != roomyFrame { panel.setFrame(roomyFrame, display: true) }
+        if !panel.isVisible {
+            panel.orderFrontRegardless()
+            Log.write("fixed layer: \(FixedSpace.pin(panel))")
         }
-        if !panel.isVisible { panel.orderFrontRegardless() }
+
+        trim?.cancel()
+        if roomy != settled {
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.trimToSettled() }
+            }
+            trim = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+        }
         snapshotIfAsked()
+    }
+
+    private func trimToSettled() {
+        guard panel.isVisible, let screen = targetScreen(), let settled = settledSize() else { return }
+        let target = frame(for: settled, on: screen)
+        if panel.frame != target { panel.setFrame(target, display: true) }
+        // If the window shrank away from under a still pointer, no "exited" event arrives.
+        if model.hovering, !panel.frame.contains(NSEvent.mouseLocation) { hoverChanged(false) }
     }
 
     /// Debug aid: when PERCH_SNAPSHOT names a file, save a picture of the panel there after each change.

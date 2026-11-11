@@ -76,17 +76,31 @@ struct NotchRootView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        let radius: CGFloat = model.expanded ? 18 : 10
+        let expanded = model.expanded
+        let open = NotchLayout.expandedSize(model)
+        let closed = NotchLayout.collapsedSize(model)
+        let size = expanded ? open : closed
+        let radius: CGFloat = expanded ? 20 : 10
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: radius,
+                                           bottomTrailingRadius: radius, topTrailingRadius: 0, style: .continuous)
+        // The black shape grows and shrinks with a spring inside a window that is already big
+        // enough. The content is laid out at its final size and revealed by the shape, so text
+        // never squeezes or reflows mid-animation.
         ZStack(alignment: .top) {
-            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: radius,
-                                   bottomTrailingRadius: radius, topTrailingRadius: 0, style: .continuous)
-                .fill(Color.black)
-            if model.expanded {
+            shape.fill(Color.black)
+            if expanded {
                 ExpandedView(model: model)
+                    .frame(width: open.width, height: open.height, alignment: .top)
+                    .transition(.opacity.animation(.easeOut(duration: 0.2).delay(0.05)))
             } else {
                 CollapsedView(model: model)
+                    .frame(width: closed.width, height: closed.height, alignment: .top)
+                    .transition(.opacity.animation(.easeOut(duration: 0.1)))
             }
         }
+        .frame(width: size.width, height: size.height, alignment: .top)
+        .clipShape(shape)
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: size)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
     }
