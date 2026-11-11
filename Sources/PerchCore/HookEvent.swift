@@ -11,6 +11,17 @@ public struct Question: Equatable {
     public let multiSelect: Bool
     public let options: [Option]
 
+    /// The question some hosts attach to the end of a turn: one line of text plus reply buttons.
+    /// Recognised by shape (an `ask` string and an `actions` list), not by tool name.
+    static func parseEndOfTurnAsk(_ input: [String: Any]) -> Question? {
+        guard let ask = input["ask"] as? String, !ask.isEmpty else { return nil }
+        let options = (input["actions"] as? [[String: Any]] ?? []).compactMap { a -> Option? in
+            guard let label = a["label"] as? String, !label.isEmpty else { return nil }
+            return Option(label: label, detail: "")
+        }
+        return Question(text: ask, multiSelect: false, options: options)
+    }
+
     static func parse(_ input: [String: Any]) -> [Question] {
         guard let raw = input["questions"] as? [[String: Any]] else { return [] }
         return raw.compactMap { q in
@@ -50,12 +61,16 @@ public struct HookEvent: Equatable {
     public let questions: [Question]
     /// The tool's input exactly as received, needed to send an answer back.
     public let toolInputJSON: Data?
+    /// True when `questions` holds an end-of-turn question, which only the session itself can take
+    /// an answer to (Perch can show it but not answer it).
+    public let endOfTurnAsk: Bool
 
     public static let questionTool = "AskUserQuestion"
 
     public init(kind: Kind, sessionID: String, cwd: String? = nil, transcriptPath: String? = nil,
                 toolName: String? = nil, toolSummary: String? = nil, notificationType: String? = nil,
-                questions: [Question] = [], toolInputJSON: Data? = nil) {
+                questions: [Question] = [], toolInputJSON: Data? = nil, endOfTurnAsk: Bool = false) {
+        self.endOfTurnAsk = endOfTurnAsk
         self.questions = questions
         self.toolInputJSON = toolInputJSON
         self.kind = kind
@@ -79,15 +94,23 @@ public struct HookEvent: Equatable {
         self.cwd = obj["cwd"] as? String
         self.transcriptPath = obj["transcript_path"] as? String
         self.toolName = obj["tool_name"] as? String
+        var questions: [Question] = []
+        var endAsk = false
         if let input = obj["tool_input"] as? [String: Any] {
             self.toolSummary = HookEvent.summarize(input: input)
             self.toolInputJSON = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])
-            self.questions = toolName == HookEvent.questionTool ? Question.parse(input) : []
+            if toolName == HookEvent.questionTool {
+                questions = Question.parse(input)
+            } else if let ask = Question.parseEndOfTurnAsk(input) {
+                questions = [ask]
+                endAsk = true
+            }
         } else {
             self.toolSummary = nil
             self.toolInputJSON = nil
-            self.questions = []
         }
+        self.questions = questions
+        self.endOfTurnAsk = endAsk
         self.notificationType = obj["notification_type"] as? String
     }
 

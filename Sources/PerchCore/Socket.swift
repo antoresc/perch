@@ -146,6 +146,9 @@ public final class SocketServer {
 
 /// What the hook helper does: forward the event, and for a permission request wait for the answer.
 public enum HookClient {
+    /// Seconds the helper waits for the user's answer before giving up: 12 hours.
+    public static let defaultReplyTimeout = 12 * 3600
+
     public static func isPermissionRequest(_ input: Data) -> Bool {
         guard let obj = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else { return false }
         return obj["hook_event_name"] as? String == HookEvent.Kind.permissionRequest.rawValue
@@ -153,7 +156,8 @@ public enum HookClient {
 
     /// Returns the bytes to print on stdout, or nil for "say nothing" (Claude then behaves as if
     /// Perch were not installed). Never throws: if the app is not running this returns nil at once.
-    public static func send(input: Data, socketPath: String, waitForReply: Bool, replyTimeout: Int = 300) -> Data? {
+    public static func send(input: Data, socketPath: String, waitForReply: Bool,
+                            replyTimeout: Int = defaultReplyTimeout) -> Data? {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         defer { close(fd) }

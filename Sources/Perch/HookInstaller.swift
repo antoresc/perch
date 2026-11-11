@@ -23,6 +23,12 @@ enum HookInstaller {
         return HookSettings.isInstalled(in: root)
     }
 
+    /// Installed by an older Perch: the entries work but should be rewritten.
+    static func needsUpdate() -> Bool {
+        guard let root = try? HookSettings.read(PerchPaths.settingsFile) else { return false }
+        return HookSettings.isOutdated(in: root)
+    }
+
     static func install() throws {
         try copyHelper()
         let fm = FileManager.default

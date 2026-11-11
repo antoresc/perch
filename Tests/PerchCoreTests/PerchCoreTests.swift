@@ -177,7 +177,20 @@ final class HookSettingsTests: XCTestCase {
         let out = HookSettings.install(into: [:], command: "/h/perch-hook")
         let group = ((out["hooks"] as? [String: Any])?["PermissionRequest"] as? [[String: Any]])?.first
         XCTAssertEqual(group?["matcher"] as? String, "*")
-        XCTAssertEqual((group?["hooks"] as? [[String: Any]])?.first?["timeout"] as? Int, 310)
+        XCTAssertEqual((group?["hooks"] as? [[String: Any]])?.first?["timeout"] as? Int, 12 * 3600 + 10)
+    }
+
+    func testOutdatedWhenInstalledWithAnOlderWaitingTime() {
+        let fresh = HookSettings.install(into: existing, command: "/h/perch-hook")
+        XCTAssertFalse(HookSettings.isOutdated(in: fresh))
+        XCTAssertFalse(HookSettings.isOutdated(in: existing))
+
+        var old = fresh
+        var hooks = old["hooks"] as! [String: Any]
+        hooks["PermissionRequest"] = [["matcher": "*", "hooks": [["type": "command", "command": "/h/perch-hook", "timeout": 310]]]]
+        old["hooks"] = hooks
+        XCTAssertTrue(HookSettings.isOutdated(in: old))
+        XCTAssertFalse(HookSettings.isOutdated(in: HookSettings.install(into: old, command: "/h/perch-hook")))
     }
 
     func testBrokenSettingsFileIsNotOverwritten() throws {
@@ -432,5 +445,55 @@ final class QuestionTests: XCTestCase {
         XCTAssertEqual(b.apply(pre), [.attention])
         XCTAssertEqual(b.apply(req), [])
         XCTAssertEqual(b.sessions[0].status, .needsApproval)
+    }
+}
+
+final class OpenQuestionTests: XCTestCase {
+    private let askJSON = #"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"mcp__host__wrap_up","tool_input":{"recap":"Done.","ask":"Push it to GitHub?","actions":[{"label":"Yes, push it"},{"label":"Not yet"},{"action":"commit"}]}}"#
+
+    func testParsesEndOfTurnAsk() throws {
+        let e = try XCTUnwrap(HookEvent(json: Data(askJSON.utf8)))
+        XCTAssertTrue(e.endOfTurnAsk)
+        XCTAssertEqual(e.questions.count, 1)
+        XCTAssertEqual(e.questions[0].text, "Push it to GitHub?")
+        XCTAssertEqual(e.questions[0].options.map(\.label), ["Yes, push it", "Not yet"])
+    }
+
+    func testRecapWithoutAskIsNotAQuestion() throws {
+        let e = try XCTUnwrap(HookEvent(json: Data(#"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"mcp__host__wrap_up","tool_input":{"recap":"Done."}}"#.utf8)))
+        XCTAssertFalse(e.endOfTurnAsk)
+        XCTAssertTrue(e.questions.isEmpty)
+    }
+
+    func testTurnEndingOnAQuestionWaitsForTheUser() throws {
+        var b = SessionBoard()
+        let ask = try XCTUnwrap(HookEvent(json: Data(askJSON.utf8)))
+        XCTAssertEqual(b.apply(ask), [])
+        _ = b.apply(HookEvent(kind: .postToolUse, sessionID: "s", toolName: "mcp__host__wrap_up"))
+        XCTAssertEqual(b.sessions[0].openQuestions.count, 1)
+
+        let stop = b.apply(HookEvent(kind: .stop, sessionID: "s"))
+        XCTAssertTrue(stop.contains(.attention))
+        XCTAssertEqual(b.sessions[0].status, .needsYou)
+
+        _ = b.apply(HookEvent(kind: .userPromptSubmit, sessionID: "s"))
+        XCTAssertTrue(b.sessions[0].openQuestions.isEmpty)
+        _ = b.apply(HookEvent(kind: .stop, sessionID: "s"))
+        XCTAssertEqual(b.sessions[0].status, .finished)
+    }
+
+    func testAskedQuestionStaysOpenUntilAnswered() {
+        var b = SessionBoard()
+        let q = Question(text: "Which colour?", multiSelect: false, options: [])
+        _ = b.apply(HookEvent(kind: .preToolUse, sessionID: "s", toolName: "AskUserQuestion", questions: [q]))
+        XCTAssertEqual(b.sessions[0].openQuestions, [q])
+        // Perch stops being able to answer, but the question is still open.
+        _ = b.apply(HookEvent(kind: .permissionRequest, sessionID: "s", toolName: "AskUserQuestion", questions: [q]))
+        b.approvalDeferred(sessionID: "s")
+        XCTAssertEqual(b.sessions[0].status, .needsYou)
+        XCTAssertEqual(b.sessions[0].openQuestions, [q])
+        // Answered in Claude.
+        _ = b.apply(HookEvent(kind: .postToolUse, sessionID: "s", toolName: "AskUserQuestion"))
+        XCTAssertTrue(b.sessions[0].openQuestions.isEmpty)
     }
 }

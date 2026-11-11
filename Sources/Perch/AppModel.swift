@@ -17,6 +17,15 @@ struct PendingApproval: Identifiable, Equatable {
     var isQuestion: Bool { !questions.isEmpty && toolInputJSON != nil }
 }
 
+/// A question that is still open in a session but that Perch cannot answer itself: an
+/// end-of-turn question, or one whose waiting time ran out. Shown so it can be read again.
+struct OpenQuestion: Identifiable {
+    let session: Session
+    let title: String
+    var id: String { session.id }
+    var questions: [Question] { session.openQuestions }
+}
+
 struct NotchMetrics: Equatable {
     var hasNotch = false
     var notchWidth: CGFloat = 0
@@ -125,7 +134,8 @@ final class AppModel: ObservableObject {
             let pending = PendingApproval(sessionID: event.sessionID, project: name,
                                           tool: event.toolName ?? "a tool",
                                           summary: event.toolSummary ?? "", fd: fd,
-                                          questions: event.questions, toolInputJSON: event.toolInputJSON)
+                                          questions: event.endOfTurnAsk ? [] : event.questions,
+                                          toolInputJSON: event.toolInputJSON)
             approvals.append(pending)
             if suppressed { suppressed = false }
             watch(pending)
@@ -137,6 +147,15 @@ final class AppModel: ObservableObject {
         saveSessions()
         Log.write("state " + board.sessions.map { "\($0.projectName)=\($0.status)" }.joined(separator: ", ")
             + " approvals=\(approvals.count)")
+    }
+
+    /// Open questions with no answerable card, most urgent session first.
+    var openQuestions: [OpenQuestion] {
+        sessions
+            .filter { s in
+                s.status == .needsYou && !s.openQuestions.isEmpty && !approvals.contains { $0.sessionID == s.id }
+            }
+            .map { OpenQuestion(session: $0, title: title(for: $0)) }
     }
 
     // MARK: Remembering sessions across restarts
@@ -177,6 +196,10 @@ final class AppModel: ObservableObject {
         }
         Log.write("answer \(decision) tool=\(pending.tool)")
         discard(id)
+        // "Answer in Claude" should take you there.
+        if decision == .later, let session = board.sessions.first(where: { $0.id == pending.sessionID }) {
+            open(session)
+        }
     }
 
     /// Sends the chosen answers back to Claude. `answers` maps each question's text to the label(s) picked.
@@ -200,6 +223,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The helper stopped waiting, so Perch can no longer answer this one. Say so on the row
+    /// instead of leaving it looking answerable.
+    private func expire(_ id: UUID) {
+        if let pending = approvals.first(where: { $0.id == id }) {
+            board.approvalDeferred(sessionID: pending.sessionID)
+        }
+        discard(id)
+    }
+
     /// Notices when the helper goes away (answered in Claude itself, or timed out) so the card disappears.
     private func watch(_ pending: PendingApproval) {
         let fd = pending.fd
@@ -210,7 +242,7 @@ final class AppModel: ObservableObject {
             let n = recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
             if n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 Log.write("helper went away")
-                self?.discard(id)
+                self?.expire(id)
             } else if n > 0 {
                 var junk = [UInt8](repeating: 0, count: 256)
                 _ = recv(fd, &junk, junk.count, MSG_DONTWAIT)

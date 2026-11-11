@@ -24,7 +24,8 @@ if arguments.contains("--remove-hooks") {
     }
 }
 if arguments.contains("--status") {
-    print(HookInstaller.isInstalled() ? "hooks: installed" : "hooks: not installed")
+    print(!HookInstaller.isInstalled() ? "hooks: not installed"
+        : HookInstaller.needsUpdate() ? "hooks: installed, update available (run --install-hooks)" : "hooks: installed")
     exit(0)
 }
 

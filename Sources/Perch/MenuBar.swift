@@ -142,7 +142,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(login)
         menu.addItem(.separator())
 
-        if HookInstaller.isInstalled() {
+        if HookInstaller.needsUpdate() {
+            menu.addItem(info("Claude hooks: installed, update available"))
+            menu.addItem(item("Update Claude Hooks", #selector(installHooks)))
+            menu.addItem(item("Remove Claude Hooks", #selector(removeHooks)))
+        } else if HookInstaller.isInstalled() {
             menu.addItem(info("Claude hooks: installed"))
             menu.addItem(item("Remove Claude Hooks", #selector(removeHooks)))
         } else {

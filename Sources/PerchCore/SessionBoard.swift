@@ -28,6 +28,9 @@ public struct Session: Identifiable, Equatable {
     public var status: SessionStatus
     public var detail: String?
     public var updatedAt: Date
+    /// What Claude last asked and the user has not answered yet. Kept so the question can be
+    /// shown again for as long as it is open.
+    public var openQuestions: [Question] = []
 
     public var projectName: String {
         let name = (cwd as NSString).lastPathComponent
@@ -77,12 +80,15 @@ public struct SessionBoard: Equatable {
         case .userPromptSubmit:
             sessions[i].status = .working
             sessions[i].detail = nil
+            sessions[i].openQuestions = []
             effects.append(.clearApprovals(session: e.sessionID, tool: nil, summary: nil))
         case .preToolUse:
+            if e.endOfTurnAsk { sessions[i].openQuestions = e.questions }
             if let tool = e.toolName, SessionBoard.questionTools.contains(tool) {
                 // Claude is asking the user something; only they can answer, in the session.
                 sessions[i].status = .needsYou
                 sessions[i].detail = nil
+                if !e.questions.isEmpty { sessions[i].openQuestions = e.questions }
                 effects.append(.attention)
             } else {
                 sessions[i].status = .runningTool(e.toolName ?? "tool")
@@ -91,6 +97,7 @@ public struct SessionBoard: Equatable {
         case .postToolUse:
             sessions[i].status = .working
             sessions[i].detail = nil
+            if e.toolName == HookEvent.questionTool { sessions[i].openQuestions = [] }
             effects.append(.clearApprovals(session: e.sessionID, tool: e.toolName, summary: e.toolSummary))
         case .permissionRequest:
             // A question is announced once already, by its PreToolUse event.
@@ -105,7 +112,8 @@ public struct SessionBoard: Equatable {
                 }
             }
         case .stop:
-            sessions[i].status = .finished
+            // A turn that ended on a question is waiting for an answer, not just finished.
+            sessions[i].status = sessions[i].openQuestions.isEmpty ? .finished : .needsYou
             sessions[i].detail = nil
             effects.append(.attention)
             effects.append(.clearApprovals(session: e.sessionID, tool: nil, summary: nil))
@@ -123,6 +131,7 @@ public struct SessionBoard: Equatable {
     public mutating func approvalResolved(sessionID: String) {
         guard let i = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
         if sessions[i].status == .needsApproval { sessions[i].status = .working }
+        sessions[i].openQuestions = []
     }
 
     /// Call after the user chose "Later" in Perch: Claude's own prompt takes over.

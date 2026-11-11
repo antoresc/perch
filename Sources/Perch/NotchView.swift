@@ -16,12 +16,15 @@ enum NotchLayout {
 
     static func band(_ m: NotchMetrics) -> CGFloat { max(m.barHeight, 28) }
 
-    static func cardHeight(_ a: PendingApproval) -> CGFloat {
-        guard a.isQuestion else { return approvalHeight }
-        let body = a.questions.reduce(CGFloat(0)) {
+    static func questionsHeight(_ questions: [Question]) -> CGFloat {
+        let body = questions.reduce(CGFloat(0)) {
             $0 + questionTextHeight + CGFloat($1.options.count) * optionHeight
         }
         return 20 + 20 + body + cardFooterHeight + 8
+    }
+
+    static func cardHeight(_ a: PendingApproval) -> CGFloat {
+        a.isQuestion ? questionsHeight(a.questions) : approvalHeight
     }
     static func expandedWidth(_ m: NotchMetrics) -> CGFloat { max(440, m.notchWidth + 220) }
 
@@ -38,6 +41,7 @@ enum NotchLayout {
         let rows = max(1, min(model.sessions.count, maxRows))
         let height = band(model.metrics)
             + model.approvals.reduce(CGFloat(0)) { $0 + cardHeight($1) }
+            + model.openQuestions.reduce(CGFloat(0)) { $0 + questionsHeight($1.questions) }
             + CGFloat(rows) * rowHeight
             + footerHeight + bottomPadding
         return CGSize(width: expandedWidth(model.metrics), height: height)
@@ -190,6 +194,10 @@ private struct ExpandedView: View {
                 }
             }
 
+            ForEach(model.openQuestions) { item in
+                OpenQuestionCard(item: item) { model.open(item.session) }
+            }
+
             if sessions.isEmpty {
                 Text("No Claude sessions running")
                     .font(.system(size: 12))
@@ -313,7 +321,7 @@ private struct ApprovalCard: View {
                     ? AnyShapeStyle(SessionStatus.needsYou.color) : AnyShapeStyle(.tertiary))
                 .lineLimit(1)
             HStack(spacing: 8) {
-                Button("Later") { onDecision(.later) }
+                Button("Decide in Claude") { onDecision(.later) }
                     .buttonStyle(PillButton(fill: .clear, text: Color.white.opacity(0.6)))
                 Spacer()
                 Button("Deny") { onDecision(.deny) }
@@ -451,5 +459,46 @@ private struct OptionRow: View {
         .onHover { hovered = $0 }
         .frame(height: NotchLayout.optionHeight)
         .help(option.detail)
+    }
+}
+
+/// A question that is still open but can only be answered in Claude. Every choice, and the
+/// button, opens that conversation.
+private struct OpenQuestionCard: View {
+    let item: OpenQuestion
+    let open: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(item.title) asks")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SessionStatus.needsYou.color)
+                .lineLimit(1)
+                .frame(height: 20, alignment: .top)
+            ForEach(Array(item.questions.enumerated()), id: \.offset) { _, question in
+                Text(question.text)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: NotchLayout.questionTextHeight,
+                           maxHeight: NotchLayout.questionTextHeight, alignment: .leading)
+                ForEach(question.options, id: \.label) { option in
+                    OptionRow(option: option, selected: false, action: open)
+                }
+            }
+            HStack(spacing: 8) {
+                Text("Answered in Claude, not from here")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("Open in Claude") { open() }
+                    .buttonStyle(PillButton(fill: .white, text: .black))
+            }
+            .frame(height: NotchLayout.cardFooterHeight, alignment: .bottom)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.08)))
+        .padding(.horizontal, 10)
+        .frame(height: NotchLayout.questionsHeight(item.questions))
     }
 }

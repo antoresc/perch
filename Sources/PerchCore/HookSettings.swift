@@ -5,6 +5,11 @@ public enum HookSettings {
     /// Any hook command containing this text is ours.
     public static let marker = "perch-hook"
 
+    /// How long Claude Code lets the helper wait for the user's click, in seconds (12 hours, plus
+    /// a margin over the helper's own limit). A question left unanswered stays answerable in Perch
+    /// that long; answering in Claude itself ends the wait at once.
+    public static let permissionTimeout = HookClient.defaultReplyTimeout + 10
+
     struct Spec {
         let event: String
         let matchesTools: Bool
@@ -16,7 +21,7 @@ public enum HookSettings {
         Spec(event: "UserPromptSubmit", matchesTools: false, timeout: nil),
         Spec(event: "PreToolUse", matchesTools: true, timeout: nil),
         Spec(event: "PostToolUse", matchesTools: true, timeout: nil),
-        Spec(event: "PermissionRequest", matchesTools: true, timeout: 310),
+        Spec(event: "PermissionRequest", matchesTools: true, timeout: permissionTimeout),
         Spec(event: "Notification", matchesTools: false, timeout: nil),
         Spec(event: "Stop", matchesTools: false, timeout: nil),
         Spec(event: "SessionEnd", matchesTools: false, timeout: nil),
@@ -77,6 +82,19 @@ public enum HookSettings {
             if !found { return false }
         }
         return true
+    }
+
+    /// True when our hooks are installed but were written by an older Perch with a different
+    /// waiting time, so "Install" should be run again.
+    public static func isOutdated(in root: [String: Any]) -> Bool {
+        guard isInstalled(in: root),
+              let groups = (root["hooks"] as? [String: Any])?["PermissionRequest"] as? [Any] else { return false }
+        for g in groups {
+            for hook in (g as? [String: Any])?["hooks"] as? [Any] ?? [] where isOurs(hook) {
+                return ((hook as? [String: Any])?["timeout"] as? Int) != permissionTimeout
+            }
+        }
+        return false
     }
 
     private static func isOurs(_ hook: Any) -> Bool {
