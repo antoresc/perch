@@ -149,9 +149,11 @@ final class AppModel: ObservableObject {
             onScreen(id) { [weak self] visible in
                 guard let self, !visible, self.endsOnAnswerableQuestion(id),
                       let session = self.board.sessions.first(where: { $0.id == id }) else {
+                    Log.write("turn end not held session=\(id) onScreen=\(visible)")
                     close(fd)
                     return
                 }
+                Log.write("turn end held session=\(id)")
                 let pending = PendingApproval(sessionID: id, project: self.title(for: session),
                                               tool: "question", summary: "", fd: fd,
                                               questions: session.openQuestions, turnEnd: true)

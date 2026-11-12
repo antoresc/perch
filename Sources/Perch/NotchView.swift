@@ -23,6 +23,11 @@ enum NotchLayout {
         return 20 + 20 + body + cardFooterHeight + 8
     }
 
+    /// A question that can only be answered in Claude: its text, its choices on one line, a button.
+    static func openQuestionHeight(_ questions: [Question]) -> CGFloat {
+        20 + 20 + CGFloat(questions.count) * (questionTextHeight + 18) + cardFooterHeight + 8
+    }
+
     static func cardHeight(_ a: PendingApproval) -> CGFloat {
         a.isQuestion ? questionsHeight(a.questions) : approvalHeight
     }
@@ -41,7 +46,7 @@ enum NotchLayout {
         let rows = max(1, min(model.sessions.count, maxRows))
         let height = band(model.metrics)
             + model.approvals.reduce(CGFloat(0)) { $0 + cardHeight($1) }
-            + model.openQuestions.reduce(CGFloat(0)) { $0 + questionsHeight($1.questions) }
+            + model.openQuestions.reduce(CGFloat(0)) { $0 + openQuestionHeight($1.questions) }
             + CGFloat(rows) * rowHeight
             + footerHeight + bottomPadding
         return CGSize(width: expandedWidth(model.metrics), height: height)
@@ -462,8 +467,8 @@ private struct OptionRow: View {
     }
 }
 
-/// A question that is still open but can only be answered in Claude. Every choice, and the
-/// button, opens that conversation.
+/// A question that is still open but can only be answered in Claude. Its choices are shown as
+/// plain text, never as buttons, so anything that looks clickable in the panel really answers.
 private struct OpenQuestionCard: View {
     let item: OpenQuestion
     let open: () -> Void
@@ -482,12 +487,14 @@ private struct OpenQuestionCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: NotchLayout.questionTextHeight,
                            maxHeight: NotchLayout.questionTextHeight, alignment: .leading)
-                ForEach(question.options, id: \.label) { option in
-                    OptionRow(option: option, selected: false, action: open)
-                }
+                Text(question.options.map(\.label).joined(separator: "  ·  "))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18, alignment: .leading)
             }
             HStack(spacing: 8) {
-                Text("Answered in Claude, not from here")
+                Text("Answer this one in Claude")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -499,6 +506,6 @@ private struct OpenQuestionCard: View {
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.08)))
         .padding(.horizontal, 10)
-        .frame(height: NotchLayout.questionsHeight(item.questions))
+        .frame(height: NotchLayout.openQuestionHeight(item.questions))
     }
 }
