@@ -20,6 +20,8 @@ public struct DesktopSession: Equatable {
 public final class DesktopSessionIndex {
     private var seen: [String: Date] = [:]
     private var byCLI: [String: DesktopSession] = [:]
+    /// When the person last had each conversation in front of them, by the app's own id.
+    private var focusedAt: [String: Double] = [:]
 
     public init() {}
 
@@ -39,7 +41,15 @@ public final class DesktopSessionIndex {
                   let cli = obj["cliSessionId"] as? String, !cli.isEmpty else { continue }
             let title = (obj["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             byCLI[cli] = DesktopSession(localID: local, title: title)
+            if let focused = (obj["lastFocusedAt"] as? NSNumber)?.doubleValue { focusedAt[local] = focused }
         }
+    }
+
+    /// True when this session is the conversation the person looked at most recently in the
+    /// Claude app, which is the one on screen while that app is in front.
+    public func isOnScreen(cliSessionID: String) -> Bool {
+        guard let local = byCLI[cliSessionID]?.localID, let mine = focusedAt[local] else { return false }
+        return !focusedAt.contains { $0.key != local && $0.value > mine }
     }
 
     /// Looks a session up by the id Claude Code's hooks report.

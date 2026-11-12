@@ -141,17 +141,25 @@ final class AppModel: ObservableObject {
             approvals.append(pending)
             if suppressed { suppressed = false }
             watch(pending)
-        } else if event.kind == .stop, let session = board.sessions.first(where: { $0.id == event.sessionID }),
-                  session.askIsEndOfTurn, session.openQuestions.count == 1,
-                  !session.openQuestions[0].options.isEmpty {
-            // The turn ended on a question with reply buttons. Keep the helper waiting for a
-            // short while so a click here can answer it; after that it is answered in Claude.
-            let pending = PendingApproval(sessionID: event.sessionID, project: title(for: session),
-                                          tool: "question", summary: "", fd: fd,
-                                          questions: session.openQuestions, turnEnd: true)
-            approvals.append(pending)
-            if suppressed { suppressed = false }
-            watch(pending)
+        } else if event.kind == .stop, endsOnAnswerableQuestion(event.sessionID) {
+            // The turn ended on a question with reply buttons. Unless that conversation is the
+            // one on screen, keep the helper waiting for a short while so a click here can answer
+            // it. On screen, the turn ends at once so Claude shows its own buttons.
+            let id = event.sessionID
+            onScreen(id) { [weak self] visible in
+                guard let self, !visible, self.endsOnAnswerableQuestion(id),
+                      let session = self.board.sessions.first(where: { $0.id == id }) else {
+                    close(fd)
+                    return
+                }
+                let pending = PendingApproval(sessionID: id, project: self.title(for: session),
+                                              tool: "question", summary: "", fd: fd,
+                                              questions: session.openQuestions, turnEnd: true)
+                self.approvals.append(pending)
+                if self.suppressed { self.suppressed = false }
+                self.watch(pending)
+                self.startFocusWatch()
+            }
         } else {
             close(fd)
         }
@@ -160,6 +168,55 @@ final class AppModel: ObservableObject {
         saveSessions()
         Log.write("state " + board.sessions.map { "\($0.projectName)=\($0.status)" }.joined(separator: ", ")
             + " approvals=\(approvals.count)")
+    }
+
+    // MARK: Holding the end of a turn
+
+    static let claudeBundleID = "com.anthropic.claudefordesktop"
+    private var focusTimer: Timer?
+
+    private func endsOnAnswerableQuestion(_ sessionID: String) -> Bool {
+        guard let s = board.sessions.first(where: { $0.id == sessionID }) else { return false }
+        return s.status == .needsYou && s.askIsEndOfTurn && s.openQuestions.count == 1
+            && !s.openQuestions[0].options.isEmpty
+    }
+
+    /// Whether the person has this conversation in front of them: the Claude app is the front
+    /// app and this is the conversation it last showed. Answers on the main thread.
+    private func onScreen(_ sessionID: String, _ done: @escaping (Bool) -> Void) {
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == AppModel.claudeBundleID else {
+            done(false)
+            return
+        }
+        let index = desktopIndex
+        usageQueue.async {
+            index.refresh(root: PerchPaths.desktopSessionsDir)
+            let visible = index.isOnScreen(cliSessionID: sessionID)
+            DispatchQueue.main.async { done(visible) }
+        }
+    }
+
+    /// While a turn end is held, notice the person going to that conversation in Claude and let
+    /// the turn end, so its own buttons appear there.
+    private func startFocusWatch() {
+        guard focusTimer == nil else { return }
+        focusTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let held = self.approvals.filter(\.turnEnd)
+            if held.isEmpty {
+                self.focusTimer?.invalidate()
+                self.focusTimer = nil
+                return
+            }
+            for pending in held {
+                self.onScreen(pending.sessionID) { [weak self] visible in
+                    if visible {
+                        Log.write("released turn end: conversation is on screen")
+                        self?.discard(pending.id)
+                    }
+                }
+            }
+        }
     }
 
     /// Open questions with no answerable card, most urgent session first.

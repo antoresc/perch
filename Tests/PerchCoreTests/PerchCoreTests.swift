@@ -560,4 +560,24 @@ final class OpenQuestionTests: XCTestCase {
         _ = b.apply(HookEvent(kind: .preToolUse, sessionID: "s", toolName: "AskUserQuestion", questions: [q]))
         XCTAssertFalse(b.sessions[0].askIsEndOfTurn)
     }
+
+    func testOnScreenIsTheMostRecentlyFocusedConversation() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("perch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func record(_ local: String, _ cli: String, focused: Int?) throws {
+            var obj: [String: Any] = ["sessionId": local, "cliSessionId": cli]
+            if let focused { obj["lastFocusedAt"] = focused }
+            try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent("\(local).json"))
+        }
+        try record("local_a", "cli-a", focused: 1000)
+        try record("local_b", "cli-b", focused: 2000)
+        try record("local_c", "cli-c", focused: nil)
+        let index = DesktopSessionIndex()
+        index.refresh(root: dir)
+        XCTAssertTrue(index.isOnScreen(cliSessionID: "cli-b"))
+        XCTAssertFalse(index.isOnScreen(cliSessionID: "cli-a"))
+        XCTAssertFalse(index.isOnScreen(cliSessionID: "cli-c"))
+        XCTAssertFalse(index.isOnScreen(cliSessionID: "unknown"))
+    }
 }
