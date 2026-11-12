@@ -9,7 +9,8 @@ Perch is an independent project. It is not made by, endorsed by, or affiliated w
 - **Session status.** A pill at the notch with one dot per session: blue is working, orange needs you, green has finished and is waiting for you, grey is idle. Hover to see each conversation's name, state and current tool.
 - **Pops open when Claude is waiting.** When a turn finishes or Claude asks something, the panel opens for a few seconds with that conversation at the top. Clicking anywhere else closes it at once.
 - **Answer questions.** When Claude asks a multiple-choice question, the panel shows it with its choices; clicking one answers it. "Answer in Claude" hands it back to Claude's own dialog.
-- **Open questions stay visible.** A question Perch cannot answer itself, such as the one a session leaves at the end of its turn, or one left longer than twelve hours, is still shown in the panel with its choices until it is answered. Clicking it opens that conversation.
+- **Answer the question a turn ends on.** When a session finishes its turn with reply buttons, Perch holds the end of that turn for up to two minutes and shows the buttons in the panel; clicking one sends your answer and the session carries on. "Answer in Claude", or opening the conversation, ends the hold at once.
+- **Open questions stay visible.** A question Perch can no longer answer itself, such as an end-of-turn one after those two minutes, or one left longer than twelve hours, is still shown in the panel with its choices until it is answered. Clicking it opens that conversation.
 - **Approve or deny.** When Claude asks permission, the panel shows the tool and the full command or file (scrollable), with Allow, Deny and Decide in Claude. The last one hands the request back to Claude's own prompt and takes you to that conversation.
 - **Click to open.** Clicking a row brings the Claude desktop app forward on that conversation.
 - **Remove a row.** The × on a row takes that conversation off the list. It comes back only if that conversation does something again.
@@ -70,6 +71,7 @@ Then:
 - **Opening a conversation and showing its name** rely on how the Claude desktop app currently stores its sessions and on its `claude://` link. These are not documented and may change. Sessions started in a terminal get a name but cannot be opened by clicking.
 - **Approvals are rare in auto mode.** If your sessions approve most things by themselves, you will mostly see questions and "finished" pop-ups.
 - **Waiting time.** A question or permission request stays answerable in Perch for up to twelve hours. In a terminal session, Claude Code may hold its own prompt back while Perch is waiting; use "Answer in Claude" or "Decide in Claude" to release it. If you installed the hooks with an earlier version, choose **Update Claude Hooks** from the menu to get the longer waiting time.
+- **End-of-turn questions.** While Perch holds the end of a turn (up to two minutes), Claude shows that turn as still running and does not show its own reply buttons yet. Your click reaches the session as a note from the hook, not as a typed message. If you installed the hooks with an earlier version, choose **Update Claude Hooks**.
 - **Typed answers.** A question's "Other" free-text answer has to be given in Claude.
 - **Staying put between desktops.** To stop the pill sliding sideways when you swipe between desktops, Perch places its window in its own layer using window-server calls that Apple does not document. They are looked up when the app starts; if a future macOS removes them, the pill goes back to sliding with the desktop and nothing else changes.
 - **Menu bar space.** If the bird icon does not appear, your menu bar is full and macOS has hidden it. Use the ⋯ button in the panel.
@@ -77,7 +79,7 @@ Then:
 
 ## How it works
 
-Claude Code runs `perch-hook` on each event: prompt sent, tool started, permission needed, turn finished. The helper passes the event to the app over the local socket and exits. For a permission request or a question it waits up to twelve hours for your click, so a question you leave for later is still answerable from the notch; whichever of Perch and Claude's own prompt is answered first wins.
+Claude Code runs `perch-hook` on each event: prompt sent, tool started, permission needed, turn finished. The helper passes the event to the app over the local socket and exits. For a permission request or a question it waits up to twelve hours for your click, so a question you leave for later is still answerable from the notch; whichever of Perch and Claude's own prompt is answered first wins. At the end of a turn that left reply buttons it waits up to two minutes in the same way; a click makes the turn continue with your answer.
 
 - `Sources/PerchCore` holds event parsing, session state, the settings merge, usage sums and the socket code. It is covered by tests.
 - `Sources/perch-hook` is the helper.

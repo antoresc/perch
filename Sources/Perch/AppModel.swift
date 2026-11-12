@@ -13,8 +13,10 @@ struct PendingApproval: Identifiable, Equatable {
     /// Non-empty when this is Claude asking a question rather than asking permission.
     var questions: [Question] = []
     var toolInputJSON: Data?
+    /// True when this is the question a turn ended on, held open at the very end of the turn.
+    var turnEnd = false
 
-    var isQuestion: Bool { !questions.isEmpty && toolInputJSON != nil }
+    var isQuestion: Bool { !questions.isEmpty && (toolInputJSON != nil || turnEnd) }
 }
 
 /// A question that is still open in a session but that Perch cannot answer itself: an
@@ -139,6 +141,17 @@ final class AppModel: ObservableObject {
             approvals.append(pending)
             if suppressed { suppressed = false }
             watch(pending)
+        } else if event.kind == .stop, let session = board.sessions.first(where: { $0.id == event.sessionID }),
+                  session.askIsEndOfTurn, session.openQuestions.count == 1,
+                  !session.openQuestions[0].options.isEmpty {
+            // The turn ended on a question with reply buttons. Keep the helper waiting for a
+            // short while so a click here can answer it; after that it is answered in Claude.
+            let pending = PendingApproval(sessionID: event.sessionID, project: title(for: session),
+                                          tool: "question", summary: "", fd: fd,
+                                          questions: session.openQuestions, turnEnd: true)
+            approvals.append(pending)
+            if suppressed { suppressed = false }
+            watch(pending)
         } else {
             close(fd)
         }
@@ -204,10 +217,17 @@ final class AppModel: ObservableObject {
 
     /// Sends the chosen answers back to Claude. `answers` maps each question's text to the label(s) picked.
     func answerQuestion(_ id: UUID, answers: [String: String]) {
-        guard let pending = approvals.first(where: { $0.id == id }), let input = pending.toolInputJSON,
-              let reply = PermissionReply.answer(toolInputJSON: input, answers: answers) else { return }
-        UnixSocket.writeAll(pending.fd, reply)
-        board.approvalResolved(sessionID: pending.sessionID)
+        guard let pending = approvals.first(where: { $0.id == id }) else { return }
+        if pending.turnEnd {
+            guard let question = pending.questions.first, let answer = answers[question.text] else { return }
+            UnixSocket.writeAll(pending.fd, StopReply.answer(question: question.text, answer: answer))
+            board.turnEndAnswered(sessionID: pending.sessionID)
+        } else {
+            guard let input = pending.toolInputJSON,
+                  let reply = PermissionReply.answer(toolInputJSON: input, answers: answers) else { return }
+            UnixSocket.writeAll(pending.fd, reply)
+            board.approvalResolved(sessionID: pending.sessionID)
+        }
         Log.write("answered question (\(answers.count) answer(s))")
         discard(id)
     }
@@ -287,6 +307,8 @@ final class AppModel: ObservableObject {
     /// Brings the Claude app forward on this conversation.
     func open(_ session: Session) {
         guard let url = links[session.id] else { return }
+        // Going to the conversation: let its turn end now, so Claude shows its own reply buttons.
+        approvals.filter { $0.turnEnd && $0.sessionID == session.id }.forEach { discard($0.id) }
         Log.write("open \(session.id)")
         NSWorkspace.shared.open(url)
         board.acknowledge(sessionID: session.id)

@@ -149,6 +149,22 @@ public enum HookClient {
     /// Seconds the helper waits for the user's answer before giving up: 12 hours.
     public static let defaultReplyTimeout = 12 * 3600
 
+    /// Seconds the helper holds the end of a turn open, so a question the turn ended on can be
+    /// answered from Perch. Kept short: while it is held, Claude shows the turn as still running.
+    public static let stopReplyTimeout = 120
+
+    /// How long to wait for the app's reply to this event, or nil for "don't wait".
+    /// Permission requests wait for the user's click. The end of a turn waits too: the app
+    /// answers at once unless the turn ended on a question it can take an answer to.
+    public static func replyWait(for input: Data) -> Int? {
+        guard let obj = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else { return nil }
+        switch obj["hook_event_name"] as? String {
+        case HookEvent.Kind.permissionRequest.rawValue: return defaultReplyTimeout
+        case HookEvent.Kind.stop.rawValue: return stopReplyTimeout
+        default: return nil
+        }
+    }
+
     public static func isPermissionRequest(_ input: Data) -> Bool {
         guard let obj = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else { return false }
         return obj["hook_event_name"] as? String == HookEvent.Kind.permissionRequest.rawValue

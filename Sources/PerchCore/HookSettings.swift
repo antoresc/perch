@@ -10,6 +10,9 @@ public enum HookSettings {
     /// that long; answering in Claude itself ends the wait at once.
     public static let permissionTimeout = HookClient.defaultReplyTimeout + 10
 
+    /// How long Claude Code lets the helper hold the end of a turn, in seconds.
+    public static let stopTimeout = HookClient.stopReplyTimeout + 10
+
     struct Spec {
         let event: String
         let matchesTools: Bool
@@ -23,7 +26,7 @@ public enum HookSettings {
         Spec(event: "PostToolUse", matchesTools: true, timeout: nil),
         Spec(event: "PermissionRequest", matchesTools: true, timeout: permissionTimeout),
         Spec(event: "Notification", matchesTools: false, timeout: nil),
-        Spec(event: "Stop", matchesTools: false, timeout: nil),
+        Spec(event: "Stop", matchesTools: false, timeout: stopTimeout),
         Spec(event: "SessionEnd", matchesTools: false, timeout: nil),
         Spec(event: "PreCompact", matchesTools: false, timeout: nil),
     ]
@@ -87,11 +90,12 @@ public enum HookSettings {
     /// True when our hooks are installed but were written by an older Perch with a different
     /// waiting time, so "Install" should be run again.
     public static func isOutdated(in root: [String: Any]) -> Bool {
-        guard isInstalled(in: root),
-              let groups = (root["hooks"] as? [String: Any])?["PermissionRequest"] as? [Any] else { return false }
-        for g in groups {
-            for hook in (g as? [String: Any])?["hooks"] as? [Any] ?? [] where isOurs(hook) {
-                return ((hook as? [String: Any])?["timeout"] as? Int) != permissionTimeout
+        guard isInstalled(in: root), let hooks = root["hooks"] as? [String: Any] else { return false }
+        for spec in specs {
+            for g in hooks[spec.event] as? [Any] ?? [] {
+                for hook in (g as? [String: Any])?["hooks"] as? [Any] ?? [] where isOurs(hook) {
+                    if ((hook as? [String: Any])?["timeout"] as? Int) != spec.timeout { return true }
+                }
             }
         }
         return false

@@ -496,4 +496,68 @@ final class OpenQuestionTests: XCTestCase {
         _ = b.apply(HookEvent(kind: .postToolUse, sessionID: "s", toolName: "AskUserQuestion"))
         XCTAssertTrue(b.sessions[0].openQuestions.isEmpty)
     }
+
+    // MARK: Answering the question a turn ended on
+
+    func testHelperWaitsOnPermissionAndTurnEndOnly() {
+        func wait(_ name: String) -> Int? {
+            HookClient.replyWait(for: Data(#"{"hook_event_name":"\#(name)","session_id":"s"}"#.utf8))
+        }
+        XCTAssertEqual(wait("PermissionRequest"), 12 * 3600)
+        XCTAssertEqual(wait("Stop"), 120)
+        XCTAssertNil(wait("PreToolUse"))
+        XCTAssertNil(wait("SubagentStop"))
+        XCTAssertNil(HookClient.replyWait(for: Data("not json".utf8)))
+    }
+
+    func testStopReplyKeepsTheTurnGoingWithTheAnswer() throws {
+        let data = StopReply.answer(question: "Ship \"it\"?", answer: "Yes, ship")
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(obj["decision"] as? String, "block")
+        let reason = try XCTUnwrap(obj["reason"] as? String)
+        XCTAssertTrue(reason.contains("Ship \"it\"?"))
+        XCTAssertTrue(reason.contains("Yes, ship"))
+    }
+
+    func testStopHookTimeoutCoversTheHoldAndOlderInstallsAreOutdated() {
+        let fresh = HookSettings.install(into: [:], command: "/h/perch-hook")
+        let stop = ((fresh["hooks"] as? [String: Any])?["Stop"] as? [[String: Any]])?.first
+        XCTAssertEqual((stop?["hooks"] as? [[String: Any]])?.first?["timeout"] as? Int, 130)
+        XCTAssertFalse(HookSettings.isOutdated(in: fresh))
+
+        var old = fresh
+        var hooks = old["hooks"] as! [String: Any]
+        hooks["Stop"] = [["hooks": [["type": "command", "command": "/h/perch-hook"]]]]
+        old["hooks"] = hooks
+        XCTAssertTrue(HookSettings.isOutdated(in: old))
+    }
+
+    func testTurnEndAnswerRoundTrip() throws {
+        let path = NSTemporaryDirectory() + "perch-\(UUID().uuidString.prefix(8)).sock"
+        let server = SocketServer(path: path) { _, fd in
+            UnixSocket.writeAll(fd, StopReply.answer(question: "Q?", answer: "A"))
+            close(fd)
+        }
+        try server.start()
+        defer { server.stop() }
+        let input = Data(#"{"hook_event_name":"Stop","session_id":"s"}"#.utf8)
+        let reply = try XCTUnwrap(HookClient.send(input: input, socketPath: path, waitForReply: true, replyTimeout: 5))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        XCTAssertEqual(obj["decision"] as? String, "block")
+    }
+
+    func testAnsweringATurnEndQuestionPutsTheSessionBackToWork() throws {
+        var b = SessionBoard()
+        _ = b.apply(try XCTUnwrap(HookEvent(json: Data(askJSON.utf8))))
+        XCTAssertTrue(b.sessions[0].askIsEndOfTurn)
+        _ = b.apply(HookEvent(kind: .stop, sessionID: "s"))
+        b.turnEndAnswered(sessionID: "s")
+        XCTAssertEqual(b.sessions[0].status, .working)
+        XCTAssertTrue(b.sessions[0].openQuestions.isEmpty)
+
+        // A question asked mid-turn is not an end-of-turn one.
+        let q = Question(text: "Which?", multiSelect: false, options: [])
+        _ = b.apply(HookEvent(kind: .preToolUse, sessionID: "s", toolName: "AskUserQuestion", questions: [q]))
+        XCTAssertFalse(b.sessions[0].askIsEndOfTurn)
+    }
 }

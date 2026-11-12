@@ -132,6 +132,18 @@ public struct HookEvent: Equatable {
     }
 }
 
+/// The JSON a Stop hook prints to keep the turn going with the user's answer to the question
+/// the turn ended on.
+public enum StopReply {
+    public static func answer(question: String, answer: String) -> Data {
+        let reason = "The user answered your end-of-turn question by clicking a reply button in Perch, "
+            + "a notch app on their Mac. Question: \"\(question)\" Their answer: \"\(answer)\". "
+            + "Treat this as the user's reply and continue."
+        let out: [String: Any] = ["decision": "block", "reason": reason]
+        return (try? JSONSerialization.data(withJSONObject: out, options: [.sortedKeys])) ?? Data()
+    }
+}
+
 /// The exact JSON a PermissionRequest hook prints to answer for the user.
 public enum PermissionReply {
     public static func allow() -> Data {

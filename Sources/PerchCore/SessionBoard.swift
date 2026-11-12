@@ -31,6 +31,9 @@ public struct Session: Identifiable, Equatable {
     /// What Claude last asked and the user has not answered yet. Kept so the question can be
     /// shown again for as long as it is open.
     public var openQuestions: [Question] = []
+    /// True when `openQuestions` is the question a turn ends on (reply buttons under the last
+    /// message), which can be answered at the very end of the turn.
+    public var askIsEndOfTurn = false
 
     public var projectName: String {
         let name = (cwd as NSString).lastPathComponent
@@ -83,12 +86,18 @@ public struct SessionBoard: Equatable {
             sessions[i].openQuestions = []
             effects.append(.clearApprovals(session: e.sessionID, tool: nil, summary: nil))
         case .preToolUse:
-            if e.endOfTurnAsk { sessions[i].openQuestions = e.questions }
+            if e.endOfTurnAsk {
+                sessions[i].openQuestions = e.questions
+                sessions[i].askIsEndOfTurn = true
+            }
             if let tool = e.toolName, SessionBoard.questionTools.contains(tool) {
                 // Claude is asking the user something; only they can answer, in the session.
                 sessions[i].status = .needsYou
                 sessions[i].detail = nil
-                if !e.questions.isEmpty { sessions[i].openQuestions = e.questions }
+                if !e.questions.isEmpty {
+                    sessions[i].openQuestions = e.questions
+                    sessions[i].askIsEndOfTurn = false
+                }
                 effects.append(.attention)
             } else {
                 sessions[i].status = .runningTool(e.toolName ?? "tool")
@@ -131,6 +140,14 @@ public struct SessionBoard: Equatable {
     public mutating func approvalResolved(sessionID: String) {
         guard let i = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
         if sessions[i].status == .needsApproval { sessions[i].status = .working }
+        sessions[i].openQuestions = []
+    }
+
+    /// Call after the user answered, in Perch, the question a turn ended on: the turn goes on.
+    public mutating func turnEndAnswered(sessionID: String) {
+        guard let i = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        sessions[i].status = .working
+        sessions[i].detail = nil
         sessions[i].openQuestions = []
     }
 
