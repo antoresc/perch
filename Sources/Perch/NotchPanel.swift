@@ -27,13 +27,15 @@ final class HoverHostingView<Content: View>: NSHostingView<Content> {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let area { removeTrackingArea(area) }
-        let new = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+        let new = NSTrackingArea(rect: bounds,
+                                 options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
                                  owner: self, userInfo: nil)
         addTrackingArea(new)
         area = new
     }
 
     override func mouseEntered(with event: NSEvent) { onHover?(true) }
+    override func mouseMoved(with event: NSEvent) { onHover?(true) }
     override func mouseExited(with event: NSEvent) { onHover?(false) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
@@ -83,6 +85,7 @@ final class NotchPanelController {
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.collapse?.cancel()
+                self?.collapse = nil
                 self?.model.dismissPanel()
             }
         }
@@ -90,15 +93,30 @@ final class NotchPanelController {
         layout()
     }
 
-    private func hoverChanged(_ inside: Bool) {
-        collapse?.cancel()
-        if inside {
+    /// True when the pointer is over the black shape itself. The window is larger than the shape
+    /// (room for the animation, and it shrinks a moment after the shape does), and that
+    /// transparent room must not count as hovering.
+    private func pointerOverShape() -> Bool {
+        guard let screen = targetScreen() else { return false }
+        let size = model.expanded ? NotchLayout.expandedSize(model) : NotchLayout.collapsedSize(model)
+        guard size.width > 0, size.height > 0 else { return false }
+        return frame(for: size, on: screen).insetBy(dx: -3, dy: -3).contains(NSEvent.mouseLocation)
+    }
+
+    /// Called when the pointer enters, moves inside or leaves the window.
+    private func hoverChanged(_ insideWindow: Bool) {
+        if insideWindow && pointerOverShape() {
+            collapse?.cancel()
+            collapse = nil
             if !model.hovering { model.hovering = true }
             return
         }
+        // Already closing, or not open by hover: nothing to do (moves arrive many times a second).
+        guard model.hovering, collapse == nil else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.model.hovering else { return }
-            self.model.hovering = false
+            guard let self else { return }
+            self.collapse = nil
+            if self.model.hovering { self.model.hovering = false }
         }
         collapse = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
@@ -124,6 +142,8 @@ final class NotchPanelController {
     /// Extra transparent room around the shape, so the spring can overshoot without being cut off.
     private static let slack = CGSize(width: 24, height: 16)
     private var trim: DispatchWorkItem?
+    /// The size the pending trim was scheduled for.
+    private var trimTarget: CGSize?
 
     private func frame(for size: CGSize, on screen: NSScreen) -> NSRect {
         NSRect(x: (screen.frame.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,
@@ -149,6 +169,7 @@ final class NotchPanelController {
         }
         guard let settled = settledSize() else {
             trim?.cancel()
+            trim = nil
             panel.orderOut(nil)
             return
         }
@@ -163,12 +184,22 @@ final class NotchPanelController {
             Log.write("fixed layer: \(FixedSpace.pin(panel))")
         }
 
-        trim?.cancel()
-        if roomy != settled {
+        // Layout runs on every change, and busy sessions change many times a second. A trim that
+        // is already waiting for this size keeps its deadline; restarting it each time would
+        // leave the window, and its hover area, at the open size for as long as anything is busy.
+        if roomy == settled {
+            trim?.cancel()
+            trim = nil
+        } else if trim == nil || trimTarget != settled {
+            trim?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated { self?.trimToSettled() }
+                MainActor.assumeIsolated {
+                    self?.trim = nil
+                    self?.trimToSettled()
+                }
             }
             trim = work
+            trimTarget = settled
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
         }
         snapshotIfAsked()
